@@ -1,0 +1,74 @@
+event对象里面有logger对象
+当event_wrap对象被析释时-》会调用logger.log()方法-》logger.log()方法会调用appender.log()方法
+-》appender.log()方法会调用formatter.format()方法，最后
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+tcp，http，这一部分具体大致分析：
+    http是基于tcp实现的，所以首先我们开发了一个TCPServer类，TcpServer这个类持有m_socks，TcpServer这个类主要是维护m_socks这些服务器端的套接字，tcpServer对象可以通过bind函数
+    绑定addrs，并且在bind函数中利用addrs这些地址创建Scoket对象,然后保存在m_socks中，tcpServer对象就可以维护这些socket了，tcpServer对象可以调用start函数，在start中调用stratAccept函数
+    ，让所有的socket调用自己的accept监听客户端了，如果连接到了客户端，就可以拿到accept返回的客户端的socket了，然后通过handleClient函数和客户端交互了。
+
+    在实现HttpServer之前，我们还需要实现一个Servlet和DispatchServlet，这里和java里面的servlet很像，就是通过uri来确定具体的servlet（FunctionServlet），servlet中就可以处理浏览器
+    传来的request请求，然后返回给浏览器。每一个FunctionServlet都持有一个callback，当uri在DispatchServlet执行handle函数中匹配成功一个FunctionServlet后，functionServelt就会嗲就会通过callback这个回调
+    函数处理request，response，session
+
+
+    httpServer和浏览器通信底层是tcp协议进行信息的运输，但是在应用层是通过http协议来实现浏览器和http服务器沟通的，http协议离不开HttpResquest和HttpResponse，所以我们实现了HttpRequest
+    和HttpRsponse。客户浏览器发送请求到http服务器时，此时浏览器和服务器已经通过tcp连接成功了，然后服务器获得了客户端的client（socket-Fd),然后服务器就可以通过读取client来获取客户端发送
+    到服务器的请求（此时的请求是char*字符串）。然后此时就需要解析这个字符串变成一个HttpRequest，这里我们使用到的是httpRequestParser对象，里面有一个excute函数，就可以解析字符串为
+    HttpRequest。
+
+    又实现了一个HttpSession，里面有一个recvRequest函数里面创建一个一个HttpRequestParser对象用来解析reqeust字符串获得，然后返回一个HttpReqeust。还有一个sendResponse函数，用来
+    将处理好的HttpResonse对象写回前端。session是一次连接的中间产物，在我理解的是，一个浏览器和服务器的连接就是一个session，所以我们将这一次连接需要用到的对request和response的操作
+    封装在session中。HttpSeesion继承了SocketStream，SocketStream对象封装了对socket的操作比如read和write。HttpSession对象的创建需要一个client（客户端的socket）。
+
+    
+
+
+    最后实现了HttpServer，因为http是基于tcp这个传输层协议实现的，所以HttpServer继承了TcpServer这个类，并且重写了TcpServer这个类的handleClient函数，并且在HttpServer里持有一个
+    m_isKeepalive这个bool成员变量，用于说明这个httpServer是keep-alive还是close状态。HttpServer还持有一个DispatchServlet类型的成员变量，用于分发uri对应的servelt。HttpServer
+    这个类使用流程：首先还是创建服务器Address对象adr，然后创建HttpServer对象server，然后还是server调用继承至TcpServer的方法bind，将Address绑定并且通过这个addr创建创建服务器的socket。
+    然后server调用start函数，在start函数中调用startAccet函数使服务器socket开始accept，如果accept成功返回一个客户端的socketFd类型的client，然后通过协程调用handleClient函数和客户
+    端进行交互。在handleClient函数中，通过client创建一个HttpSession对象session，然后调用session的recvRequest获取HttpRequest，然后在创建一个HttpResponse对象rsp，再调用
+    dispatchServlet对象的handle函数处理req，rsp，session。在handle函数中，调用了getMatchedServlet函数，获得一个和uri匹配的servelt（FunctionServelt类型的），然后调用这个servelt
+    对象的handle函数，最后在这个servelt的handle函数中回调了自己的m_cb函数最后处理了req，rsp，session然后返回给浏览器。
+
+
+
+最后总结：httpServer执行流程。创建一个Address对象addr和一个HttpServer对象server -> 
+server.bind(addr),然后在bind函数中创建了socket对象sock，并且保存到了server的m_socks里进行维护，同时调用了socket对象的bind函数将次sock和addr进行绑定->
+然后在调用server.start(addr)启动服务器开始循环监听(accept)客户端浏览器,每一个addr都会开启一个协程序执行startAccept函数开始真正调用->
+当有浏览器通过ip地址，端口，uri，访问该server并且成功了，accept返回一个client并且开启一个协程执行handleClient函数拿着这个client去处理客户端请求->
+在handleClient函数中，创建了一个HttpSession对象session，然后调用session.recvRequest函数将从客户端浏览器读取到的字符串通过requestParser解析为HttpRequest返回，同时创建了一个HttpResponse对象->
+然后在handleClient函数调用了m_dispatch.handle函数处理req，rsp，session ->
+最后m_diapatch.handle函数返回后，handleClient函数又调用了session.sendReponse函数将response写回给客户端浏览器。
+
+
+
+
+HttpConnection是封装客户端向浏览器发请求，本机作为客户端，而HttpSession是将本机作为服务端。HttpConnection类持有两个非静态方法：sendRequest和recvResponse，恰恰和HttpSession类相反
+HttpConnection对象是向服务端发送request，接受服务端的response。而HttpSession对象是给HttpServer提供服务的，每次有浏览器向HttpServer请求成功时，就会生成一个HttpSession，服务器接受
+request，发送response给客户浏览器。   HttpConnection还有静态方法，DoGet/DoPost/DoRequest,可以直接调用这些静态方法，传入服务端的ip地址host，服务端的端口port，和header和body等信息
+，DoRequest直接连接服务端，然后sendRequest，最后recvResponse。   DoRequest函数返回HttpResult，result中封装了response和error（如果有错误），
+
+HttpConnectionPool，是一个池，里面存放了max_size个HttpConnection*。  所有的HttpConnection*都是连接同一个服务端的连接，所以创建HttpConnectionPool对象时，需要传入服务端的host
+服务端的port，以及max_size,max_alivetime等必要的参数。   某个协程需要向服务端发起请求，就可以通过doRequest函数，然后doRequest会中pool中取出一个连接connection来用，用完后如果此
+connection没有超时等问题，就会重新放到pool中。
+
+
+
+
+
+
