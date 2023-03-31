@@ -5,6 +5,20 @@ event对象里面有logger对象
 
 
 
+fiber,scheduler,iomanager这三个类实现了协程和协程调度器的功能，其中还包括了线程池的功能，
+每一个线程里面有多个协程。
+执行流程是：iomanager构造函数中调用了start函数，start函数时开启协程调度器的方法。start函数就开始
+创建剩下的线程（new Thread），给Thread构造函数参数最重要的就是run函数，然后Thread构造函数中通过
+pthread_create系统函数开启线程。run函数时最关键，run函数时每一个线程的执行函数，run函数中一直循环的
+查看m_fibers中是否有任务需要执行，如果有那么就取出来FiberAndThread，然后通过其协程执行，如果没有任务
+那么run函数有一个idle_fiber协程会被调度，然后执行idle函数，idle函数功能时监听epoll树上的事件，如果
+有事件被触发，就会将触发了的事件通过triggerEent函数添加一个任务到m_fibers中，然后idle_fiber就会
+swapout出去到run函数中继续处理任务。
+
+还有一个重要的实现就是epoll方式实现了事件的监听，如果我们有事件就会通过addEvent添加到epoll树上，然后
+被监听，如果事件被触发了，idle_fiber协程执行idle函数时就会epoll_wait监听到事件触发，然后通过triggerEvent
+将事件对应的任务push到m_fibers任务队列中。
+
 
 
 
